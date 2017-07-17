@@ -14,7 +14,7 @@ public class LevelEditor : EditorWindow
 	private Vector2 scrollPosition = Vector2.zero;
 	private int state = 0;
 	private GameObject[] prefabs = null;
-	private int MaxItems = 9;
+	private int MaxItems = 3;
 
 	public class MapObject
 	{
@@ -120,11 +120,18 @@ public class LevelEditor : EditorWindow
 		{
 			GameObject levelDataObj = new GameObject("LevelData");
 			LevelData levelData = levelDataObj.AddComponent<LevelData>();
-			levelData.LevelMap = LevelMap;
+			
 			for(int i = 0; i < mapObjectList.Count; i++)
 			{
+				//If it's spawn point don't add it to the level data.
+				if(LevelMap[mapObjectList[i].index] == (int)LevelData.ElementType.SpawnPoint)
+				{
+					LevelMap[mapObjectList[i].index] = 0;
+					continue;
+				}
 				levelData.AddMapObject(mapObjectList[i].obj, mapObjectList[i].index);
 			}
+			levelData.LevelMap = LevelMap;
 
 			//Save the .unity scen file
 			string savePath = EditorUtility.SaveFilePanelInProject("Save Scene", "Level1", "unity", "saves the current changes in new scene");
@@ -138,7 +145,7 @@ public class LevelEditor : EditorWindow
 
 	void OnGUI()
 	{
-		for (int i = 1; i < 10; i++)
+		for (int i = 1; i < MaxItems + 1; i++)
 		{
 			if (Event.current != null && Event.current.isKey)
 			{
@@ -151,10 +158,9 @@ public class LevelEditor : EditorWindow
 
 		for (int i = 0; i < MaxItems; i++)
 		{
-			string text = string.Format("Item - {0}", i + 1);
+			string text = string.Format("{0}", (LevelData.ElementType)((int)LevelData.ElementType.None + (i+1)));
 			prefabs[i] = (GameObject)(EditorGUILayout.ObjectField(text, prefabs[i], typeof(GameObject), false));
 		}
-
 
 		GUILayout.Label("Configure Level");
 		scrollPosition = GUILayout.BeginScrollView(scrollPosition);

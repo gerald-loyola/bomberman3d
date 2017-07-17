@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using System.Collections;
 using System.Collections.Generic;
@@ -35,11 +36,16 @@ public class Bomberman : MonoBehaviour
 	[System.Serializable]
 	public class Player
 	{
+		public string Name;
 		public KeyInput[] Inputs;
 		public float Speed;
 		public Transform SpawnPoint;
 		public GameObject Object;
 		public CharacterController Controller;
+		public Text NameText;
+		public Text BombCountText;
+		public Text RemoteBombText;
+		public Text SpeedText;
 
 		[System.NonSerialized]
 		public int Row;
@@ -60,7 +66,7 @@ public class Bomberman : MonoBehaviour
 		public int BombStrength = 1;
 
 		[System.NonSerialized]
-		public float RemoteControlTimer = 30.0f;
+		public float RemoteControlTimer = 0.0f;
 	}
 
 	public class Bomb
@@ -84,6 +90,25 @@ public class Bomberman : MonoBehaviour
 		public List<int> AffectedIndexes = new List<int>();
 	}
 
+	public enum GameState
+	{
+		None,
+		InGame,
+		GameOver,
+	}
+
+	public class DeadInfo
+	{
+		public int DeadPlayerID;
+		public int KillerID;
+
+		public DeadInfo(int playerID, int killderID)
+		{
+			DeadPlayerID = playerID;
+			KillerID = killderID;
+		}
+	}
+
 	public int PickupRevealPct = 30;
 
 	public GameObject BombPrefab;
@@ -100,7 +125,20 @@ public class Bomberman : MonoBehaviour
 	public float BombExplodeTime = 4.0f; 
 	public float BombCleanupTime = 1.5f;
 
+	public Text GameTimerText;
+	public int MaxGameTimeInSecs = 120;
+
+	public GameObject GameOverPanelObj;
+	public Text GameOverSummaryText;
+
+	public string RemoteBombTextFormat = "Remote(secs) : {0}";
+	public string BombCountTextFormat = "BombCount : {0}";
+	public string SpeedTextFormat = "Speed : {0}";
+
 	
+	private GameState gameState = GameState.None;
+	private float gameTimer = 0.0f;
+
 	private int row = 15;
 	private int column = 15;
 
@@ -109,6 +147,7 @@ public class Bomberman : MonoBehaviour
 
 	private List<Bomb> newlyAddedBombs = new List<Bomb>();
 	private List<Bomb> activeBombs = new List<Bomb>();
+	private List<DeadInfo> deadList = new List<DeadInfo>();
 
 	void Start()
 	{
@@ -121,7 +160,19 @@ public class Bomberman : MonoBehaviour
 			Players[i].PlayerT.position = Players[i].SpawnPoint.position;
 			Players[i].ID = i;
 			ProcessIndex(Players[i]);
+			InitText(Players[i]);
 		}
+
+		gameTimer = MaxGameTimeInSecs;
+		gameState = GameState.InGame;
+	}
+
+	void InitText(Player player)
+	{
+		player.NameText.text = string.Format("{0}:", player.Name);
+		player.BombCountText.text = string.Format(BombCountTextFormat, player.CurrentBombCount);
+		player.SpeedText.text = string.Format(SpeedTextFormat, player.Speed);
+		player.RemoteBombText.text = string.Format(RemoteBombTextFormat, player.RemoteControlTimer);
 	}
 
 	int GetIndex(int r, int c)
@@ -153,6 +204,12 @@ public class Bomberman : MonoBehaviour
 		return false;
 	}
 
+	void UpdateBombCounter(Player player, int incrementer)
+	{
+		player.CurrentBombCount += incrementer;
+		player.BombCountText.text = string.Format(BombCountTextFormat, player.CurrentBombCount);
+	}
+
 	void SpawnBomb(Player player, int index)
 	{
 		bool canPlaceBomb = player.CurrentBombCount > 0;
@@ -175,7 +232,7 @@ public class Bomberman : MonoBehaviour
 			bomb.Strength = player.BombStrength;
 			newlyAddedBombs.Add(bomb);
 			activeBombs.Add(bomb);
-			player.CurrentBombCount--;
+			UpdateBombCounter(player, -1);
 		}
 	}
 
@@ -193,7 +250,8 @@ public class Bomberman : MonoBehaviour
 		{
 			case PickupManager.PickupType.ExtraBomb:
 			{
-				player.CurrentBombCount++;
+				UpdateBombCounter(player, 1);
+				player.BombCountText.text = string.Format("BombCount : {0}", player.CurrentBombCount);
 			}break;
 
 			case PickupManager.PickupType.LongerBlast:
@@ -204,11 +262,13 @@ public class Bomberman : MonoBehaviour
 			case PickupManager.PickupType.BootsOfSpeed:
 			{
 				player.Speed = Mathf.Min(player.Speed + 1, PlayerMaxSpeed);
+				player.SpeedText.text = string.Format("Speed : {0}", player.Speed);
 			}break;
 
 			case PickupManager.PickupType.RemoteBomb:
 			{
 				player.RemoteControlTimer += 10.0f;
+				player.RemoteBombText.text = string.Format(RemoteBombTextFormat, player.RemoteControlTimer);
 			}break;
 		}
 	}
@@ -421,7 +481,7 @@ public class Bomberman : MonoBehaviour
 							int playerIndex = GetIndex(Players[p].Row, Players[p].Column);
 							if(index == playerIndex)
 							{
-								AddDeadPlayer(p, bomb.PlayerID == p);
+								AddDeadPlayer(p, bomb.PlayerID);
 							}
 						}
 					}
@@ -430,7 +490,7 @@ public class Bomberman : MonoBehaviour
 					if(bomb.Timer >= BombCleanupTime)
 					{
 						bomb.CurrentState = Bomb.State.Destroyed;
-						Players[bomb.PlayerID].CurrentBombCount++;
+						UpdateBombCounter(Players[bomb.PlayerID], 1);
 						CurrentLevelData.RemoveMapObjectAt(bomb.Index);
 						destroyedBombs.Add(bomb);
 					}
@@ -444,51 +504,135 @@ public class Bomberman : MonoBehaviour
 		}
 	}
 
-	void Update()
+	void UpdatePlayer(Player player)
 	{
-		for(int i = 0; i < Players.Length; i++)
+		for(int i = 0; i < player.Inputs.Length; i++)
 		{
-			Player player = Players[i];
-			for(int j = 0; j < player.Inputs.Length; j++)
+			bool updateAction = false;
+			KeyInput input = player.Inputs[i];
+			switch(input.State)
 			{
-				bool updateAction = false;
-				switch(player.Inputs[j].State)
+				case KeyState.Up:
 				{
-					case KeyState.Up:
-					{
-						updateAction = Input.GetKeyUp(player.Inputs[j].Key);
-					}break;
+					updateAction = Input.GetKeyUp(input.Key);
+				}break;
 
-					case KeyState.Down:
-					{
-						updateAction = Input.GetKeyDown(player.Inputs[j].Key);
-					}break;
-
-					case KeyState.Press:
-					{
-						updateAction = Input.GetKey(player.Inputs[j].Key);
-					}break;
-				}
-				
-				if(updateAction)
+				case KeyState.Down:
 				{
-					UpdateAction(player, player.Inputs[j].Action);
-				}
+					updateAction = Input.GetKeyDown(input.Key);
+				}break;
+
+				case KeyState.Press:
+				{
+					updateAction = Input.GetKey(input.Key);
+				}break;
 			}
-
-			if(player.RemoteControlTimer > 0.0f)
+			
+			if(updateAction)
 			{
-				player.RemoteControlTimer -= Time.deltaTime;
+				UpdateAction(player, input.Action);
 			}
-
-			ProcessIndex(player);
+		}
+	
+		if(player.RemoteControlTimer > 0.0f)
+		{
+			player.RemoteControlTimer -= Time.deltaTime;
+			player.RemoteBombText.text = string.Format(RemoteBombTextFormat, player.RemoteControlTimer);
 		}
 
-		UpdateBombs();
+		ProcessIndex(player);
 	}
 
-	void AddDeadPlayer(int playerIndex, bool isSucide)
+	void UpdateGameTimer()
 	{
-		Debug.LogFormat("Player killed : {0}, Is Sucide? {1}", playerIndex, isSucide);
+		//Update Game Timer
+		gameTimer -= Time.deltaTime;
+		if(gameTimer < 0)
+		{
+			gameTimer = 0.0f;
+		}
+		int minutes = (int)gameTimer/60;
+		int seconds = (int)(gameTimer - (minutes * 60));
+		GameTimerText.text = string.Format("Timer - {0}:{1:00}", minutes, seconds);
+		if(gameTimer <= 0.0f)
+		{
+			SetGameOver("It's a Draw!");
+		}
+	}
+
+	void Update()
+	{
+		switch(gameState)
+		{
+			case GameState.InGame:
+			{
+				for(int i = 0; i < Players.Length; i++)
+				{
+					UpdatePlayer(Players[i]);
+				}
+
+				UpdateBombs();
+
+				if(deadList.Count > 0)
+				{
+					string summaryText = "";
+					if(deadList.Count == Players.Length)
+					{
+						summaryText = "Both got killed!!!";
+					}
+					else
+					{
+						if(deadList[0].DeadPlayerID == deadList[0].KillerID)
+						{
+							summaryText = string.Format("OMG, {0} did a suicide!!!", Players[deadList[0].DeadPlayerID].Name);
+						}
+						else
+						{
+							summaryText = string.Format("Yay, {0} killed {1}!!!", Players[deadList[0].KillerID].Name, Players[deadList[0].DeadPlayerID].Name);
+						}
+					}
+					
+					SetGameOver(summaryText);
+					return;
+				}
+
+				UpdateGameTimer();			
+			}break;
+
+			case GameState.GameOver:
+			{
+				if(Input.GetKeyUp(KeyCode.R))
+				{
+					Restart();
+				}
+				else if(Input.GetKeyUp(KeyCode.Q))
+				{
+					Quit();
+				}
+			}break;
+		}
+	}
+
+	void SetGameOver(string summaryText)
+	{
+		gameState = GameState.GameOver;
+		GameOverPanelObj.SetActive(true);
+		GameOverSummaryText.text = summaryText;
+	}
+
+	void AddDeadPlayer(int playerID, int killerID)
+	{
+		deadList.Add(new DeadInfo(playerID, killerID));
+	}
+
+	public void Restart()
+	{
+		Scene currentScene = SceneManager.GetActiveScene();
+		SceneManager.LoadScene(currentScene.name);
+	}
+
+	public void Quit()
+	{
+		Application.Quit();
 	}
 }
